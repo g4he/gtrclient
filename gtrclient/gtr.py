@@ -1,6 +1,10 @@
-import requests, urlparse
+import requests
+import urler
 from lxml import etree
 from copy import deepcopy
+
+NSMAP = {"gtr" : "http://gtr.rcuk.ac.uk/api"}
+GTR_PREFIX = "gtr"
 
 class GtRNative(object):
     
@@ -15,14 +19,51 @@ class GtRNative(object):
         self.person_base = self.base_url + "/person/"
         self.publication_base = self.base_url + "/publication/"
     
-    def _get_xml(self, url):
+    ## List Retrieval Methods ##
+    
+    def projects(self, page=None, page_size=None):
+        page_size = self._constrain_page_size(page_size)
+        xml, paging = self._api(self.project_base, page, page_size)
+        return Projects(self, self.project_base, xml, paging)
+    
+    ## Individual retrieval methods ##
+    
+    def project(self, uuid):
+        url = self.project_base + uuid
+        raw, paging = self._api(url)
+        return Project(self, url, raw)
+
+    def organisation(self, uuid):
+        url = self.org_base + uuid
+        raw, paging = self._api(url)
+        return Organisation(self, url, raw, paging)
+        
+    def person(self, uuid):
+        url = self.person_base + uuid
+        raw, paging = self._api(url)
+        return Person(self, url, raw)
+
+    def publication(self, uuid):
+        url = self.publication_base + uuid
+        raw, paging = self._api(url)
+        return Publication(self, url, raw)
+        
+    ## Private utility methods ##
+    
+    def _api(self, rest_url, page=None, page_size=None):
         headers = {"Accept" : "application/xml"}
         resp = None
         
+        if page is not None:
+            rest_url = urler.set_query_param(rest_url, "page", page)
+        
+        if page_size is not None:
+            rest_url = urler.set_query_param(rest_url, "fetchSize", page_size)
+        
         if self.username is None:
-            resp = requests.get(url, headers=headers)
+            resp = requests.get(rest_url, headers=headers)
         else:
-            resp = requests.get(url, headers=headers, auth=(self.username, self.password))
+            resp = requests.get(rest_url, headers=headers, auth=(self.username, self.password))
         xml = None
         
         if resp is not None and resp.status_code == 200:
@@ -60,26 +101,6 @@ class GtRNative(object):
         
         return Paging(record_count, pages, fpnl[0], fpnl[1], fpnl[2], fpnl[3])
     
-    def _set_page_size(self, url, page_size=None):
-        if "?" not in url:
-            url += "?"
-        else:
-            url += "&"
-        if "fetchSize" not in url:
-            url += "fetchSize=" + (str(self.page_size) if page_size is None else str(page_size))
-        return url
-    
-    def _set_page_number(self, url, page_no):
-        if page_no is None:
-            return url
-        if "?" not in url:
-            url += "?"
-        else:
-            url += "&"
-        if "page" not in url:
-            url += "page=" + str(page_no)
-        return url
-    
     def _constrain_page_size(self, page_size):
         if page_size is None:
             return None
@@ -88,33 +109,6 @@ class GtRNative(object):
         if page_size > 100:
             return 100
         return page_size
-    
-    def projects(self, page=None, page_size=None):
-        page_size = self._constrain_page_size(page_size)
-        url = self.project_base
-        if page is not None:
-            url = self._set_page_number(self.project_base, page)
-        xml, paging = self._get_xml(self._set_page_size(url, page_size))
-        return Projects(self, xml, paging)
-    
-    def search(self, term):
-        pass
-        
-    def get_project(self, uuid):
-        raw, paging = self._get_xml(self.project_base + uuid)
-        return Project(self, raw)
-
-    def get_organisation(self, uuid):
-        raw, paging = self._get_xml(self.org_base + uuid)
-        return Organisation(self, raw, paging)
-        
-    def get_person(self, uuid):
-        raw, paging = self._get_xml(self.person_base + uuid)
-        return Person(self, raw)
-
-    def get_publication(self, uuid):
-        raw, paging = self._get_xml(self.publication_base + uuid)
-        return Publication(self, raw)
 
 class Paging(object):
     def __init__(self, record_count, pages, first, previous, next, last):
@@ -132,183 +126,190 @@ class Paging(object):
         if self.next is None or self.next == "":
             return self.pages
         
-        prev = self._extract_args(self.previous)
-        prev_page = prev.get('page', [])
+        prev_page = urler.get_query_param(self.previous, "page")
         try:
-            if len(prev_page) == 1:
-                return int(prev_page[0]) + 1
+            return int(prev_page) + 1
         except (ValueError, TypeError):
             pass
         
-        n = self._extract_args(self.next)
-        next_page = next.get('page', [])
+        next_page = urler.get_query_param(self.next, "page")
         try:
-            if len(next_page) == 1:
-                return int(next_page[0]) - 1
+            return int(next_page) - 1
         except (ValueError, TypeError):
             pass
         
+        return -1
+        
+    def current_page_size(self):
+        try:
+            if self.first is not None and self.first != "":
+                fetch_size = urler.get_query_param(self.first, "fetchSize")
+                return int(fetch_size)
+        except (ValueError, TypeError):
+            pass
         return -1
         
     def _extract_args(self, page_url):
         url = urlparse.urlparse(page_url)
         return urlparse.parse_qs(url.query)
-    
-    def current_page_size(self):
-        try:
-            if self.first is not None and self.first != "":
-                args = self._extract_args(self.first)
-                fetch_size = args.get("fetchSize", [])
-                if len(fetch_size) == 1:
-                    return int(fetch_size[0])
-        except (ValueError, TypeError):
-            pass
-        return -1
 
 class Native(object):
-    def __init__(self, client, raw, paging=None):
+    def __init__(self, client, url, raw):
         self.client = client
         self.url = url
         self.raw = raw
-        self.paging = paging
     
-    # FIXME: all of these methods belong in another Paged class
-    # which paged objects inherit from - do that at first refactor
-    def record_count(self):
-        if self.paging is not None:    
-            return self.paging.record_count
-        return 1
-    
-    def pages(self):
-        if self.paging is not None:
-            return self.paging.pages
-        return 1
-        
-    def next_page(self):
-        if self.paging is None:
-            return False
-        if self.paging.next is None or self.paging.next == "":
-            return False
-        xml, paging = self.client._get_xml(self.paging.next)
-        self.raw = xml
-        self.paging = paging
-        return True
-    
-    def previous_page(self):
-        if self.paging is None:
-            return False
-        if self.paging.previous is None or self.paging.previous == "":
-            return False
-        xml, paging = self.client._get_xml(self.paging.previous)
-        self.raw = xml
-        self.paging = paging
-        return True
-        
-    def first_page(self):
-        if self.paging is None:
-            return False
-        if self.paging.first is None or self.paging.first == "":
-            return False
-        xml, paging = self.client._get_xml(self.paging.first)
-        self.raw = xml
-        self.paging = paging
-        return True
-        
-    def last_page(self):
-        if self.paging is None:
-            return False
-        if self.paging.last is None or self.paging.last == "":
-            return False
-        xml, paging = self.client._get_xml(self.paging.last)
-        self.raw = xml
-        self.paging = paging
-        return True
-        
-    def current_page(self):
-        if self.paging is not None:
-            return self.paging.current_page()
-        return -1
-        
-    def current_page_size(self):
-        if self.paging is not None:
-            return self.paging.current_page_size()
-        return -1
-    ## end paging methods ##
+    ## Methods for use by extending classes ##
     
     def _from_xpath(self, xp):
-        els = self.raw.xpath(xp, namespaces={"gtr" : "http://gtr.rcuk.ac.uk/api"})
+        """
+        return the text from the first element found by the provided xpath
+        """
+        els = self.raw.xpath(xp, namespaces=NSMAP)
         if els is not None and len(els) > 0:
             return els[0].text
         return None
     
     def _get_subs(self, parent_xpath, siblings=()):
-        os = []
-        for org in self.raw.xpath(parent_xpath, namespaces={"gtr" : "http://gtr.rcuk.ac.uk/api"}):
+        """
+        get a tuple containing the text from the first sibling xpath inside each parent xpath
+        """
+        tups = []
+        for org in self.raw.xpath(parent_xpath, namespaces=NSMAP):
             sibs = []
             for sib in siblings:
-                els = org.xpath(sib, namespaces={"gtr" : "http://gtr.rcuk.ac.uk/api"})
-                val = None
+                els = org.xpath(sib, namespaces=NSMAP)
                 if els is not None and len(els) > 0:
                     val = els[0].text
                     sibs.append(val)
-            os.append(tuple(sibs))
-        return os
+            tups.append(tuple(sibs))
+        return tups
     
     def _do_xpath(self, xp):
-        return self.raw.xpath(xp, namespaces={"gtr" : "http://gtr.rcuk.ac.uk/api"})
+        """
+        just apply the xpath to the raw appropriately
+        """
+        return self.raw.xpath(xp, namespaces=NSMAP)
     
     def _port(self, xp, new_root):
+        """
+        for each result for the xpath, port (via a deep copy) the result to an element 
+        named by new_root
+        """
         ports = []
-        for el in self.raw.xpath(xp, namespaces={"gtr" : "http://gtr.rcuk.ac.uk/api"}): 
-            root = etree.Element("{http://gtr.rcuk.ac.uk/api}" + new_root, nsmap={"gtr" : "http://gtr.rcuk.ac.uk/api"})
+        for el in self.raw.xpath(xp, namespaces=NSMAP): 
+            root = self._gtr_element(new_root)
             for child in el:
                 root.append(deepcopy(child))
             ports.append(root)
         return ports
     
-    def _wrap(self, element, wrapper, clone=True):
-        root = etree.Element("{http://gtr.rcuk.ac.uk/api}" + wrapper, nsmap={"gtr" : "http://gtr.rcuk.ac.uk/api"})
+    def _wrap(self, source, wrappers, clone=True):
+        """
+        wrap the provided element (via a deep copy if requested) in an 
+        element named by wrappers (which may be a hierarchy of elements with their namespacessa
+        """
+        # first create the a list of elements from the hierarchy
+        hierarchy = wrappers.split("/")
+        elements = []
+        for wrapper in hierarchy:
+            parts = wrapper.split(":")
+            element = None
+            if len(parts) == 1:
+                element = self._element(GTR_PREFIX, parts[0])
+            elif len(parts) == 2:
+                element = self._element(parts[0], parts[1])
+            elements.append(element)
+        
         if clone:
-            element = deepcopy(element)
-        root.append(element)
-        return root
+            source = deepcopy(source)
+        
+        # now add the elements to eachother in reverse
+        for i in range(len(elements) - 1, -1, -1):
+            elements[i].append(source)
+            source = elements[i]
+        
+        return source
+    
+    def _element(self, prefix, name):
+        return etree.Element("{" + NSMAP.get(prefix) + "}" + name, nsmap=NSMAP)
+    
+    def _gtr_element(self, name):
+        """
+        create a new element with the GTR prefix and namespace map
+        """
+        return self._element(GTR_PREFIX, name)
     
     def xml(self):
         return etree.tostring(self.raw, pretty_print=True)
 
-class Person(Native):
-    def id(self):
-        return self._from_xpath("/gtr:personOverview/gtr:person/gtr:id")
-        
-    def name(self):
-        return self._from_xpath("/gtr:personOverview/gtr:person/gtr:name")
-            
-    def projects(self):
-        raws = self._do_xpath("/gtr:personOverview/gtr:projectCompositions/gtr:projectComposition")
-        return [Project(self.client, self._wrap(raw, "projectOverview")) for raw in raws]
-        
-    def fetch(self):
-        updated_person = self.client.get_person(self.id())
-        self.raw = updated_person.raw
-        self.paging = updated_person.paging
+class NativePaged(Native):
+    def __init__(self, client, url, raw, paging):
+        super(NativePaged, self).__init__(client, url, raw)
+        self.paging = paging
 
-class Organisation(Native):
-    def id(self):
-        return self._from_xpath("/gtr:organisationOverview/gtr:organisation/gtr:id")
-        
-    def name(self):
-        return self._from_xpath("/gtr:organisationOverview/gtr:organisation/gtr:name")
+    def record_count(self):
+        return self.paging.record_count
     
-    def fetch(self):
-        updated_org = self.client.get_organisation(self.id())
-        self.raw = updated_org.raw
-        self.paging = updated_org.paging
-
-class Projects(Native):
-
-    def projects(self):
-        raws = self._do_xpath("/gtr:projects/gtr:project")
-        return [Project(self.client, self._wrap(self._wrap(raw, "projectComposition"), "projectOverview")) for raw in raws]
+    def pages(self):
+        return self.paging.pages
+        
+    def next_page(self):
+        if self.paging.next is None or self.paging.next == "":
+            return False
+        xml, paging = self.client._api(self.paging.next)
+        self.raw = xml
+        self.paging = paging
+        return True
+    
+    def previous_page(self):
+        if self.paging.previous is None or self.paging.previous == "":
+            return False
+        xml, paging = self.client._api(self.paging.previous)
+        self.raw = xml
+        self.paging = paging
+        return True
+        
+    def first_page(self):
+        if self.paging.first is None or self.paging.first == "":
+            return False
+        xml, paging = self.client._api(self.paging.first)
+        self.raw = xml
+        self.paging = paging
+        return True
+        
+    def last_page(self):
+        if self.paging.last is None or self.paging.last == "":
+            return False
+        xml, paging = self.client._api(self.paging.last)
+        self.raw = xml
+        self.paging = paging
+        return True
+    
+    def skip_to_page(self, page):
+        if self.paging.last is None or self.paging.last == "":
+            return False
+        if page > self.paging.last:
+            return False
+        if page < 1:
+            return False
+        xml, paging = self.client._api(self.url, page=page)
+        self.raw = xml
+        self.paging = paging
+        return True
+    
+    def current_page(self):
+        return self.paging.current_page()
+        
+    def current_page_size(self):
+        return self.paging.current_page_size()
+        
+    def list_elements(self):
+        """
+        subclass should implement this to return a list of Native objects.
+        It will be used to run the iterator
+        """
+        raise NotImplementedError("list_elements has not been implemented")
     
     def __iter__(self):
         return self.iterator()
@@ -327,52 +328,103 @@ class Projects(Native):
                     break
         return f()
 
+
+#### List Objects ####
+
+class Projects(NativePaged):
+
+    project_xpath = "/gtr:projects/gtr:project"
+    
+    project_wrapper = "gtr:projectOverview/gtr:projectComposition"
+
+    def __init__(self, client, url, raw, paging):
+        super(Projects, self).__init__(client, url, raw, paging)
+
+    def projects(self):
+        raws = self._do_xpath(self.project_xpath)
+        return [Project(self.client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
+        
+    def list_elements(self):
+        return self.projects()
+
+
+##### Individual Entity Objects ####
+
 class Project(Native):
+
+    composition_base = "/gtr:projectOverview/gtr:projectComposition"
+    project_base = composition_base + "/gtr:project"
+    
+    id_xpath = project_base + "/gtr:id"
+    title_xpath = project_base + "/gtr:title"
+    start_xpath = project_base + "/gtr:fund/gtr:start"
+    status_xpath = project_base + "/gtr:status"
+    end_xpath = project_base + "/gtr:fund/gtr:end"
+    abstract_xpath = project_base + "/gtr:abstractText"
+    funder_xpath = project_base + "/gtr:fund/gtr:funder/gtr:name"
+    value_xpath = project_base + "/gtr:fund/gtr:valuePounds"
+    category_xpath = project_base + "/gtr:grantCategory"
+    reference_xpath = project_base + "/gtr:grantReference"
+    
+    lead_xpath = composition_base + "/gtr:leadResearchOrganisation"
+    orgs_xpath = composition_base + "/gtr:organisations/gtr:organisation"
+    person_xpath = composition_base + "/gtr:projectPeople/gtr:projectPerson"
+    collaborator_xpath = composition_base + "/gtr:collaborations/gtr:collaborator"
+    
+    organisation_wrapper = "organisationOverview"
+    person_wrapper = "personOverview"
+    
+    organisation_element = "organisation"
+    person_element = "person"
+
+    def __init__(self, client, url, raw):
+        super(Project, self).__init__(client, url, raw)
+
     def id(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:id")
+        return self._from_xpath(self.id_xpath)
 
     def title(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:title")
+        return self._from_xpath(self.title_xpath)
     
     def start(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:fund/gtr:start")
+        return self._from_xpath(self.start_xpath)
     
     def status(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:status")
+        return self._from_xpath(self.status_xpath)
     
     def end(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:fund/gtr:end")
+        return self._from_xpath(self.end_xpath)
     
     def abstract(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:abstractText")
+        return self._from_xpath(self.abstract_xpath)
     
     def funder(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:fund/gtr:funder/gtr:name")
+        return self._from_xpath(self.funder_xpath)
     
     def value(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:fund/gtr:valuePounds")
+        return self._from_xpath(self.value_xpath)
     
     def category(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:grantCategory")
+        return self._from_xpath(self.category_xpath)
     
     def reference(self):
-        return self._from_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:project/gtr:grantReference")
+        return self._from_xpath(self.reference_xpath)
     
     def lead(self):
-        raws = self._port("/gtr:projectOverview/gtr:projectComposition/gtr:leadResearchOrganisation", "organisation")
-        return [Organisation(self.client, self._wrap(raw, "organisationOverview")) for raw in raws]
+        raws = self._port(self.lead_xpath, self.organisation_element)
+        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
         
     def orgs(self):
-        raws = self._do_xpath("/gtr:projectOverview/gtr:projectComposition/gtr:organisations/gtr:organisation")
-        return [Organisation(self.client, self._wrap(raw, "organisationOverview")) for raw in raws]
+        raws = self._do_xpath(self.orgs_xpath)
+        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
         
     def people(self):
-        raws = self._port("/gtr:projectOverview/gtr:projectComposition/gtr:projectPeople/gtr:projectPerson", "person")
-        return [Person(self.client, self._wrap(raw, "personOverview")) for raw in raws]
+        raws = self._port(self.person_xpath, self.person_element)
+        return [Person(self.client, None, self._wrap(raw, self.person_wrapper)) for raw in raws]
     
     def collaborators(self):
-        raws = self._port("/gtr:projectOverview/gtr:projectComposition/gtr:collaborations/gtr:collaborator", "organisation")
-        return [Organisation(self.client, self._wrap(raw, "organisationOverview")) for raw in raws]
+        raws = self._port(self.collaborator_xpath, self.organisation_element)
+        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
     
     def collaboration_outputs(self):
         pass
@@ -393,6 +445,55 @@ class Project(Native):
         pass
     
     def fetch(self):
-        updated_proj = self.client.get_project(self.id())
+        updated_proj = self.client.project(self.id())
         self.raw = updated_proj.raw
-        self.paging = updated_proj.paging
+        
+class Person(Native):
+
+    overview_base = "/gtr:personOverview"
+    person_base = overview_base + "/gtr:person"
+    
+    id_xpath = person_base + "/gtr:id"
+    name_xpath = person_base + "/gtr:name"
+    projects_xpath = overview_base + "/gtr:projectCompositions/gtr:projectComposition"
+    
+    project_wrapper = "projectOverview"
+
+    def __init__(self, client, url, raw):
+        super(Person, self).__init__(client, url, raw)
+
+    def id(self):
+        return self._from_xpath(self.id_xpath)
+        
+    def name(self):
+        return self._from_xpath(self.name_xpath)
+            
+    def projects(self):
+        raws = self._do_xpath(self.projects_xpath)
+        return [Project(self.client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
+        
+    def fetch(self):
+        updated_person = self.client.person(self.id())
+        self.raw = updated_person.raw
+
+class Organisation(NativePaged):
+
+    overview_base = "/gtr:organisationOverview"
+    
+    id_xpath = overview_base + "/gtr:organisation/gtr:id"
+    name_xpath = overview_base + "/gtr:organisation/gtr:name"
+
+    def __init__(self, client, url, raw, paging):
+        super(Organisation, self).__init__(client, url, raw, paging)
+        
+    def id(self):
+        return self._from_xpath(self.id_xpath)
+        
+    def name(self):
+        return self._from_xpath(self.name_xpath)
+    
+    def fetch(self):
+        updated_org = self.client.organisation(self.id())
+        self.raw = updated_org.raw
+        self.paging = updated_org.paging
+        
