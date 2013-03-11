@@ -168,6 +168,7 @@ class Paging(object):
 class Native(object):
     def __init__(self, client, raw, paging=None):
         self.client = client
+        self.url = url
         self.raw = raw
         self.paging = paging
     
@@ -222,15 +223,6 @@ class Native(object):
         self.raw = xml
         self.paging = paging
         return True
-        
-    def skip_to_page(self, page_no):
-        if self.paging is None:
-            return False
-        if self.page_no > self.paging.pages:
-            return False
-        if self.page_no < 1:
-            return False
-        
         
     def current_page(self):
         if self.paging is not None:
