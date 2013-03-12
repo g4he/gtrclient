@@ -9,7 +9,7 @@ MIME_MAP = {"xml" : "application/xml", "json" : "application/json"}
 
 class GtRNative(object):
     
-    def __init__(self, base_url, page_size=25, serialisation="xml", username=None, password=None):
+    def __init__(self, base_url, page_size=25, serialisation="json", username=None, password=None):
         self.base_url = base_url
         self.username = username
         self.password = password
@@ -28,44 +28,44 @@ class GtRNative(object):
     def projects(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
         data, paging = self._api(self.project_base, page, page_size)
-        return Projects(self, self.project_base, data, paging)
+        return Projects(self, data, paging, self.project_base)
         
     def organisations(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
         data, paging = self._api(self.org_base, page, page_size)
-        return Organisations(self, self.org_base, data, paging)
+        return Organisations(self, data, paging, self.org_base)
 
     def people(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
         data, paging = self._api(self.person_base, page, page_size)
-        return People(self, self.person_base, data, paging)
+        return People(self, data, paging, self.person_base)
         
     def publications(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
         data, paging = self._api(self.publication_base, page, page_size)
-        return Publications(self, self.publication_base, data, paging)
+        return Publications(self, data, paging, self.publication_base)
     
     ## Individual retrieval methods ##
     
     def project(self, uuid):
         url = self.project_base + uuid
         raw, paging = self._api(url)
-        return Project(self, url, raw)
+        return Project(self, raw)
 
     def organisation(self, uuid):
         url = self.org_base + uuid
         raw, paging = self._api(url)
-        return Organisation(self, url, raw, paging)
+        return Organisation(self, raw, paging)
         
     def person(self, uuid):
         url = self.person_base + uuid
         raw, paging = self._api(url)
-        return Person(self, url, raw)
+        return Person(self, raw)
 
     def publication(self, uuid):
         url = self.publication_base + uuid
         raw, paging = self._api(url)
-        return Publication(self, url, raw)
+        return Publication(self, raw)
         
     ## Private utility methods ##
     
@@ -234,19 +234,38 @@ class Paging(object):
         return -1
 
 class Native(object):
-    def __init__(self, client, url):
+    def __init__(self, client):
         self.client = client
-        self.url = url
         self.dao = None
+    
+    def url(self):
+        raise NotImplementedError()
 
     def xml(self, pretty_print=True):
-        raise NotImplementedError()
+        if self.dao is None:
+            return None
+        
+        if hasattr(self.dao, "xml"):
+            return self.dao.xml(pretty_print)
+        
+        xml, _ = self.client._api(self.url(), mimetype="application/xml")
+        return etree.tostring(xml, pretty_print=pretty_print)
         
     def as_dict(self):
-        raise NotImplementedError()
+        if self.dao is None:
+            return None
         
-    def json(self):
-        raise NotImplementedError()
+        if hasattr(self.dao, "as_dict"):
+            return self.dao.as_dict()
+        
+        j, _ = self.client._api(self.url(), mimetype="application/json")
+        return j
+        
+    def json(self, pretty_print=True):
+        d = self.as_dict()
+        if pretty_print:
+            return json.dumps(d, indent=2)
+        return json.dumps(d)
 
 class NativeXMLDAO(object):
 
@@ -261,7 +280,9 @@ class NativeXMLDAO(object):
         """
         els = self.raw.xpath(xp, namespaces=NSMAP)
         if els is not None and len(els) > 0:
-            return els[0].text
+            if hasattr(els[0], "text"):
+                return els[0].text
+            return str(els[0])
         return None
     
     def _get_subs(self, parent_xpath, siblings=()):
@@ -344,12 +365,15 @@ class NativeJSONDAO(object):
     def as_dict(self):
         return self.raw
         
-    def json(self):
-        return json.dumps(self.raw, indent=2)
+    def json(self, pretty_print=True):
+        d = self.as_dict()
+        if pretty_print:
+            return json.dumps(d, indent=2)
+        return json.dumps(d)
 
 class NativePaged(Native):
-    def __init__(self, client, url, paging):
-        super(NativePaged, self).__init__(client, url)
+    def __init__(self, client, paging):
+        super(NativePaged, self).__init__(client)
         self.paging = paging
 
     def record_count(self):
@@ -397,7 +421,7 @@ class NativePaged(Native):
             return False
         if page < 1:
             return False
-        raw, paging = self.client._api(self.url, page=page)
+        raw, paging = self.client._api(self.url(), page=page)
         self.dao.raw = raw
         self.paging = paging
         return True
@@ -442,9 +466,13 @@ class NativePaged(Native):
 
 class Projects(NativePaged):
 
-    def __init__(self, client, url, raw, paging, dao=None):
-        super(Projects, self).__init__(client, url, paging)
+    def __init__(self, client, raw, paging, url, dao=None):
+        super(Projects, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.projects(client, raw)
+        self._url = url
+
+    def url(self):
+        return self._url
 
     def projects(self):
         return self.dao.projects(self.client)
@@ -463,14 +491,14 @@ class ProjectsXMLDAO(NativeXMLDAO):
 
     def projects(self, client):
         raws = self._do_xpath(self.project_xpath)
-        return [Project(client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
+        return [Project(client, self._wrap(raw, self.project_wrapper)) for raw in raws]
 
 class ProjectsJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
         super(ProjectsJSONDAO, self).__init__(raw)
     
     def projects(self, client):
-        return [Project(client, None, {"projectComposition" : {"project" : data}}) for data in self.raw.get('project', [])]
+        return [Project(client, {"projectComposition" : {"project" : data}}) for data in self.raw.get('project', [])]
 
 ### -------- End Projects -------- ###
 
@@ -478,10 +506,14 @@ class ProjectsJSONDAO(NativeJSONDAO):
 
 class Organisations(NativePaged):
 
-    def __init__(self, client, url, raw, paging, dao=None):
-        super(Organisations, self).__init__(client, url, paging)
+    def __init__(self, client, raw, paging, url, dao=None):
+        super(Organisations, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.organisations(client, raw)
+        self._url = url
 
+    def url(self):
+        return self._url
+        
     def organisations(self):
         return self.dao.organisations(self.client)
         
@@ -499,14 +531,14 @@ class OrganisationsXMLDAO(NativeXMLDAO):
 
     def organisations(self):
         raws = self._do_xpath(self.organisation_xpath)
-        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
+        return [Organisation(self.client, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
 
 class OrganisationsJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
         super(OrganisationsJSONDAO, self).__init__(raw)
     
     def organisations(self, client):
-        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}, None) 
+        return [Organisation(client, {"organisationOverview" : {"organisation" : data}}, None) 
                     for data in self.raw.get('organisation', [])]
 
 
@@ -516,10 +548,14 @@ class OrganisationsJSONDAO(NativeJSONDAO):
 
 class People(NativePaged):
 
-    def __init__(self, client, url, raw, paging, dao=None):
-        super(People, self).__init__(client, url, paging)
+    def __init__(self, client, raw, paging, url, dao=None):
+        super(People, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.people(client, raw)
+        self._url = url
 
+    def url(self):
+        return self._url
+        
     def people(self):
         return self.dao.people(self.client)
         
@@ -544,7 +580,7 @@ class PeopleJSONDAO(NativeJSONDAO):
         super(PeopleJSONDAO, self).__init__(raw)
 
     def people(self, client):
-        return [Person(client, None, {"personOverview" : {"person" :  data}})
+        return [Person(client, {"personOverview" : {"person" :  data}})
                     for data in self.raw.get("person", [])]
 
 ## ----- End People ------ ##
@@ -553,10 +589,14 @@ class PeopleJSONDAO(NativeJSONDAO):
 
 class Publications(NativePaged):
 
-    def __init__(self, client, url, raw, paging, dao=None):
-        super(Publications, self).__init__(client, url, paging)
+    def __init__(self, client, raw, paging, url, dao=None):
+        super(Publications, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.publications(client, raw)
+        self._url = url
 
+    def url(self):
+        return self._url
+        
     def publications(self):
         return self.dao.publications(self.client)
         
@@ -574,7 +614,7 @@ class PublicationsXMLDAO(NativeXMLDAO):
 
     def publications(self, client):
         raws = self._do_xpath(self.publication_xpath)
-        return [Publication(client, None, self._wrap(raw, self.publication_wrapper)) for raw in raws]
+        return [Publication(client, self._wrap(raw, self.publication_wrapper)) for raw in raws]
 
 class PublicationsJSONDAO(NativeJSONDAO):
 
@@ -582,7 +622,7 @@ class PublicationsJSONDAO(NativeJSONDAO):
         super(PublicationsJSONDAO, self).__init__(raw)
 
     def publications(self, client):
-        return [Publication(client, None, {"publicationOverview" : { "publication" : data }})
+        return [Publication(client, {"publicationOverview" : { "publication" : data }})
                         for data in self.raw.get("publication", [])]
 
 ## ------- End Publications ------ ##
@@ -592,10 +632,11 @@ class PublicationsJSONDAO(NativeJSONDAO):
 ## ------ Project ------- ##
 
 class Project(Native):
-    def __init__(self, client, url, raw, dao=None):
-        super(Project, self).__init__(client, url)
+    def __init__(self, client, raw, dao=None):
+        super(Project, self).__init__(client)
         self.dao = dao if dao is not None else client.factory.project(client, raw)
 
+    def url(self): return self.dao.url()
     def id(self): return self.dao.id()
     def title(self): return self.dao.title()
     def start(self): return self.dao.start()
@@ -627,6 +668,7 @@ class ProjectXMLDAO(NativeXMLDAO):
     composition_base = "/gtr:projectOverview/gtr:projectComposition"
     project_base = composition_base + "/gtr:project"
     
+    url_xpath = project_base + "/@url"
     id_xpath = project_base + "/gtr:id"
     title_xpath = project_base + "/gtr:title"
     start_xpath = project_base + "/gtr:fund/gtr:start"
@@ -651,6 +693,9 @@ class ProjectXMLDAO(NativeXMLDAO):
 
     def __init__(self, raw):
         super(ProjectXMLDAO, self).__init__(raw)
+
+    def url(self):
+        return self._from_xpath(self.url_xpath)
 
     def id(self):
         return self._from_xpath(self.id_xpath)
@@ -709,6 +754,9 @@ class ProjectJSONDAO(NativeJSONDAO):
         return (self.raw.get("projectComposition", {})
                         .get("project", {}))
 
+    def url(self):
+        return self._project().get("url")
+
     def id(self):
         return self._project().get("id")
     
@@ -761,10 +809,11 @@ class ProjectJSONDAO(NativeJSONDAO):
 
 class Organisation(NativePaged):
 
-    def __init__(self, client, url, raw, paging, dao=None):
-        super(Organisation, self).__init__(client, url, paging)
+    def __init__(self, client, raw, paging, dao=None):
+        super(Organisation, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.organisation(client, raw)
-        
+    
+    def url(self): return self.dao.url()
     def id(self): return self.dao.id()
     def name(self): return self.dao.name()
     
@@ -777,12 +826,16 @@ class OrganisationXMLDAO(NativeXMLDAO):
 
     overview_base = "/gtr:organisationOverview"
     
+    url_xpath = overview_base + "/gtr:organisation/@url"
     id_xpath = overview_base + "/gtr:organisation/gtr:id"
     name_xpath = overview_base + "/gtr:organisation/gtr:name"
 
     def __init__(self, raw):
         super(OrganisationXMLDAO, self).__init__(raw)
-        
+    
+    def url(self):
+        return self._from_xpath(self.url_xpath)
+    
     def id(self):
         return self._from_xpath(self.id_xpath)
         
@@ -791,17 +844,15 @@ class OrganisationXMLDAO(NativeXMLDAO):
     
 class OrganisationJSONDAO(NativeJSONDAO):
 
-    overview_base = "/gtr:organisationOverview"
-    
-    id_xpath = overview_base + "/gtr:organisation/gtr:id"
-    name_xpath = overview_base + "/gtr:organisation/gtr:name"
-
     def __init__(self, raw):
         super(OrganisationJSONDAO, self).__init__(raw)
     
     def _org(self):
         return (self.raw.get("organisationOverview", {})
                         .get("organisation", {}))
+    
+    def url(self):
+        return self._org().get("url")
     
     def id(self):
         return self._org().get("id")
@@ -815,10 +866,11 @@ class OrganisationJSONDAO(NativeJSONDAO):
 
 class Person(Native):
 
-    def __init__(self, client, url, raw, dao=None):
-        super(Person, self).__init__(client, url)
+    def __init__(self, client, raw, dao=None):
+        super(Person, self).__init__(client)
         self.dao = dao if dao is not None else client.factory.person(client, raw)
 
+    def url(self): return self.dao.url()
     def id(self): return self.dao.id()    
     def name(self): return self.dao.name()
     
@@ -832,7 +884,8 @@ class PersonXMLDAO(NativeXMLDAO):
 
     overview_base = "/gtr:personOverview"
     person_base = overview_base + "/gtr:person"
-    
+
+    url_xpath = person_base + "/@url"    
     id_xpath = person_base + "/gtr:id"
     name_xpath = person_base + "/gtr:name"
     projects_xpath = overview_base + "/gtr:projectCompositions/gtr:projectComposition"
@@ -841,6 +894,9 @@ class PersonXMLDAO(NativeXMLDAO):
 
     def __init__(self, raw):
         super(PersonXMLDAO, self).__init__(raw)
+
+    def url(self):
+        return self._from_xpath(self.url_xpath)
 
     def id(self):
         return self._from_xpath(self.id_xpath)
@@ -863,6 +919,9 @@ class PersonJSONDAO(NativeJSONDAO):
     def _person(self):
         return self._overview().get("person", {})
     
+    def url(self):
+        return self._person().get("url")
+    
     def id(self):
         return self._person().get("id")
         
@@ -878,10 +937,11 @@ class PersonJSONDAO(NativeJSONDAO):
 ## -------- Publication ----------- ##
 
 class Publication(Native):
-    def __init__(self, client, url, raw, dao=None):
-        super(Publication, self).__init__(client, url)
+    def __init__(self, client, raw, dao=None):
+        super(Publication, self).__init__(client)
         self.dao = dao if dao is not None else client.factory.publication(client, raw)
     
+    def url(self): return self.dao.url()
     def id(self): return self.dao.id()
     def title(self): return self.dao.title()
     
@@ -893,11 +953,15 @@ class PublicationXMLDAO(NativeXMLDAO):
     overview_base = "/gtr:publicationOverview"
     publication_base = overview_base + "/gtr:publication"
     
+    url_xpath = publication_base + "/@url"
     id_xpath = publication_base + "/gtr:id"
     title_xpath = publication_base + "/gtr:title"
     
     def __init__(self, raw):
         super(PublicationXMLDAO, self).__init__(raw)
+    
+    def url(self):
+        return self._from_xpath(self.url_xpath)
     
     def id(self):
         return self._from_xpath(self.id_xpath)
@@ -906,12 +970,6 @@ class PublicationXMLDAO(NativeXMLDAO):
         return self._from_xpath(self.title_xpath)
     
 class PublicationJSONDAO(NativeJSONDAO):
-    overview_base = "/gtr:publicationOverview"
-    publication_base = overview_base + "/gtr:publication"
-    
-    id_xpath = publication_base + "/gtr:id"
-    title_xpath = publication_base + "/gtr:title"
-    
     def __init__(self, raw):
         super(PublicationJSONDAO, self).__init__(raw)
     
@@ -920,6 +978,9 @@ class PublicationJSONDAO(NativeJSONDAO):
     
     def _publication(self):
         return self._overview().get("publication", {})
+    
+    def url(self):
+        return self._publication().get("url")
     
     def id(self):
         return self._publication().get("id")
