@@ -145,8 +145,8 @@ class GtRDAOFactory(object):
                 "project" : ProjectXMLDAO
             },
             "application/json" : {
-                #"projects" : ProjectsJSONDAO,
-                #"project" : ProjectJSONDAO
+                "projects" : ProjectsJSONDAO,
+                "project" : ProjectJSONDAO
             }
         }
     
@@ -408,6 +408,8 @@ class NativePaged(Native):
 
 #### List Objects ####
 
+## ------ Projects ------- ##
+
 class Projects(NativePaged):
 
     def __init__(self, client, url, raw, paging, dao=None):
@@ -432,9 +434,15 @@ class ProjectsXMLDAO(NativeXMLDAO):
     def projects(self, client):
         raws = self._do_xpath(self.project_xpath)
         return [Project(client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
-        
-    def list_elements(self):
-        return self.projects()
+
+class ProjectsJSONDAO(NativeJSONDAO):
+    def __init__(self, raw):
+        super(ProjectsJSONDAO, self).__init__(raw)
+    
+    def projects(self, client):
+        return [Project(client, None, {"projectComposition" : {"project" : data}}) for data in self.raw.get('project', [])]
+
+### -------- End Projects -------- ###
 
 class Organisations(NativePaged):
 
@@ -485,6 +493,8 @@ class Publications(NativePaged):
         return self.publications()
 
 ##### Individual Entity Objects ####
+
+## ------ Project ------- ##
 
 class Project(Native):
     def __init__(self, client, url, raw, dao=None):
@@ -592,7 +602,66 @@ class ProjectXMLDAO(NativeXMLDAO):
     def collaborators(self, client):
         raws = self._port(self.collaborator_xpath, self.organisation_element)
         return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
+
+class ProjectJSONDAO(NativeJSONDAO):
+    def __init__(self, raw):
+        super(ProjectJSONDAO, self).__init__(raw)
+
+    def _composition(self):
+        return (self.raw.get("projectComposition", {}))
+
+    def _project(self):
+        return (self.raw.get("projectComposition", {})
+                        .get("project", {}))
+
+    def id(self):
+        return self._project().get("id")
+    
+    def title(self):
+        return self._project().get("title")
+    
+    def start(self):
+        return self._project().get("fund", {}).get("start")
+    
+    def status(self):
+        return self._project().get("status")
+    
+    def end(self):
+        return self._project().get("fund", {}).get("end")
+    
+    def abstract(self):
+        return self._project().get("abstractText")
+    
+    def funder(self):
+        return self._project().get("fund", {}).get("funder", {}).get("name")
+    
+    def value(self):
+        return self._project().get("fund", {}).get("valuePounds")
+    
+    def category(self):
+        return self._project().get("grantCategory")
+    
+    def reference(self):
+        return self._project().get("grantReference")
+    
+    def lead(self, client):
+        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}) 
+                    for data in self._compositon().get("leadResearchOrganisation", [])]
         
+    def orgs(self, client):
+        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}) 
+                    for data in self._composition().get("organisation", [])]
+        
+    def people(self, client):
+        return [Person(client, None, {"personOverview" : {"person" : data }})
+                    for data in self._composition().get("projectPerson", [])]
+    
+    def collaborators(self, client):
+        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}})
+                    for data in self._composition().get("collaborator", [])]
+
+## ------ End Project -------- ##
+  
 class Person(Native):
 
     overview_base = "/gtr:personOverview"
