@@ -1,2 +1,6 @@
 *.pyc
 *.log
+build/
+dist/
+gtrclient.egg-info/
+
