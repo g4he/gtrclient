@@ -1,18 +1,22 @@
-import requests
-import urler
+import requests, json
+import urler, xmltodict
 from lxml import etree
 from copy import deepcopy
 
 NSMAP = {"gtr" : "http://gtr.rcuk.ac.uk/api"}
 GTR_PREFIX = "gtr"
+MIME_MAP = {"xml" : "application/xml", "json" : "application/json"}
 
 class GtRNative(object):
     
-    def __init__(self, base_url, page_size=25, username=None, password=None):
+    def __init__(self, base_url, page_size=25, serialisation="xml", username=None, password=None):
         self.base_url = base_url
         self.username = username
         self.password = password
         self.page_size = self._constrain_page_size(page_size)
+        self.serialisation = serialisation if serialisation in ["xml", "json"] else "xml"
+        self.mimetype = MIME_MAP.get(self.serialisation, "application/xml")
+        self.factory = GtRDAOFactory()
         
         self.project_base = self.base_url + "/project/"
         self.org_base = self.base_url + "/organisation/"
@@ -23,23 +27,23 @@ class GtRNative(object):
     
     def projects(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        xml, paging = self._api(self.project_base, page, page_size)
-        return Projects(self, self.project_base, xml, paging)
+        data, paging = self._api(self.project_base, page, page_size)
+        return Projects(self, self.project_base, data, paging)
         
     def organisations(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        xml, paging = self._api(self.org_base, page, page_size)
-        return Organisations(self, self.org_base, xml, paging)
+        data, paging = self._api(self.org_base, page, page_size)
+        return Organisations(self, self.org_base, data, paging)
 
     def people(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        xml, paging = self._api(self.person_base, page, page_size)
-        return People(self, self.person_base, xml, paging)
+        data, paging = self._api(self.person_base, page, page_size)
+        return People(self, self.person_base, data, paging)
         
     def publications(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        xml, paging = self._api(self.publication_base, page, page_size)
-        return Publications(self, self.publication_base, xml, paging)
+        data, paging = self._api(self.publication_base, page, page_size)
+        return Publications(self, self.publication_base, data, paging)
     
     ## Individual retrieval methods ##
     
@@ -65,9 +69,11 @@ class GtRNative(object):
         
     ## Private utility methods ##
     
-    def _api(self, rest_url, page=None, page_size=None):
-        headers = {"Accept" : "application/xml"}
-        resp = None
+    def _api(self, rest_url, mimetype=None, page=None, page_size=None):
+        accept = self.mimetype
+        if mimetype is not None and mimetype in MIME_MAP.values():
+            accept = mimetype
+        headers = {"Accept" : accept}
         
         if page is not None:
             rest_url = urler.set_query_param(rest_url, "page", page)
@@ -75,17 +81,23 @@ class GtRNative(object):
         if page_size is not None:
             rest_url = urler.set_query_param(rest_url, "fetchSize", page_size)
         
+        resp = None
         if self.username is None:
             resp = requests.get(rest_url, headers=headers)
         else:
             resp = requests.get(rest_url, headers=headers, auth=(self.username, self.password))
-        xml = None
+            
+        if resp is None or resp.status_code != 200:
+            return None, None # FIXME: maybe raise an exception?
         
-        if resp is not None and resp.status_code == 200:
-            xml = etree.fromstring(resp.text.encode("utf-8"))
+        data = None
+        if accept == "application/xml":
+            data = etree.fromstring(resp.text.encode("utf-8"))
+        elif accept == "application/json":
+            data = json.loads(resp.text)
         
         paging = self._extract_paging(resp)
-        return xml, paging
+        return data, paging
     
     def _extract_paging(self, resp):
         try:
@@ -125,6 +137,31 @@ class GtRNative(object):
             return 100
         return page_size
 
+class GtRDAOFactory(object):
+    def __init__(self):
+        self.class_map = {
+            "application/xml" : {
+                "projects" : ProjectsXMLDAO,
+                "project" : ProjectXMLDAO
+            },
+            "application/json" : {
+                #"projects" : ProjectsJSONDAO,
+                #"project" : ProjectJSONDAO
+            }
+        }
+    
+    def projects(self, client, data):
+        return self._load(client, data, "projects")
+        
+    def project(self, client, data):
+        return self._load(client, data, "project")
+    
+    def _load(self, client, data, domain):
+        klazz = self.class_map.get(client.mimetype, {}).get(domain)
+        if domain is not None:
+            return klazz(data)
+        return None
+
 class Paging(object):
     def __init__(self, record_count, pages, first, previous, next, last):
         self.record_count = record_count
@@ -136,6 +173,8 @@ class Paging(object):
         
     def current_page(self):
         # oddly, we have to work this out by looking at the previous and next pages
+        # although the JSON serialisation does actually provide this as part of
+        # the data, the XML serialisation does not, so this is suitably general
         if self.previous is None or self.previous == "":
             return 1
         if self.next is None or self.next == "":
@@ -163,15 +202,25 @@ class Paging(object):
         except (ValueError, TypeError):
             pass
         return -1
-        
-    def _extract_args(self, page_url):
-        url = urlparse.urlparse(page_url)
-        return urlparse.parse_qs(url.query)
 
 class Native(object):
-    def __init__(self, client, url, raw):
+    def __init__(self, client, url):
         self.client = client
         self.url = url
+        self.dao = None
+
+    def xml(self, pretty_print=True):
+        raise NotImplementedError()
+        
+    def as_dict(self):
+        raise NotImplementedError()
+        
+    def json(self):
+        raise NotImplementedError()
+
+class NativeXMLDAO(object):
+
+    def __init__(self, raw):
         self.raw = raw
     
     ## Methods for use by extending classes ##
@@ -255,12 +304,22 @@ class Native(object):
         """
         return self._element(GTR_PREFIX, name)
     
-    def xml(self):
-        return etree.tostring(self.raw, pretty_print=True)
+    def xml(self, pretty_print=True):
+        return etree.tostring(self.raw, pretty_print=pretty_print)
+    
+class NativeJSONDAO(object):
+    def __init__(self, raw):
+        self.raw = raw
+    
+    def as_dict(self):
+        return self.raw
+        
+    def json(self):
+        return json.dumps(self.raw, indent=2)
 
 class NativePaged(Native):
-    def __init__(self, client, url, raw, paging):
-        super(NativePaged, self).__init__(client, url, raw)
+    def __init__(self, client, url, paging):
+        super(NativePaged, self).__init__(client, url)
         self.paging = paging
 
     def record_count(self):
@@ -272,16 +331,16 @@ class NativePaged(Native):
     def next_page(self):
         if self.paging.next is None or self.paging.next == "":
             return False
-        xml, paging = self.client._api(self.paging.next)
-        self.raw = xml
+        raw, paging = self.client._api(self.paging.next)
+        self.dao.raw = raw
         self.paging = paging
         return True
     
     def previous_page(self):
         if self.paging.previous is None or self.paging.previous == "":
             return False
-        xml, paging = self.client._api(self.paging.previous)
-        self.raw = xml
+        raw, paging = self.client._api(self.paging.previous)
+        self.dao.raw = raw
         self.paging = paging
         return True
         
@@ -289,15 +348,15 @@ class NativePaged(Native):
         if self.paging.first is None or self.paging.first == "":
             return False
         xml, paging = self.client._api(self.paging.first)
-        self.raw = xml
+        self.dao.raw = xml
         self.paging = paging
         return True
         
     def last_page(self):
         if self.paging.last is None or self.paging.last == "":
             return False
-        xml, paging = self.client._api(self.paging.last)
-        self.raw = xml
+        raw, paging = self.client._api(self.paging.last)
+        self.dao.raw = raw
         self.paging = paging
         return True
     
@@ -308,8 +367,8 @@ class NativePaged(Native):
             return False
         if page < 1:
             return False
-        xml, paging = self.client._api(self.url, page=page)
-        self.raw = xml
+        raw, paging = self.client._api(self.url, page=page)
+        self.dao.raw = raw
         self.paging = paging
         return True
     
@@ -351,16 +410,28 @@ class NativePaged(Native):
 
 class Projects(NativePaged):
 
+    def __init__(self, client, url, raw, paging, dao=None):
+        super(Projects, self).__init__(client, url, paging)
+        self.dao = dao if dao is not None else client.factory.projects(client, raw)
+
+    def projects(self):
+        return self.dao.projects(self.client)
+        
+    def list_elements(self):
+        return self.projects()
+
+class ProjectsXMLDAO(NativeXMLDAO):
+
     project_xpath = "/gtr:projects/gtr:project"
     
     project_wrapper = "gtr:projectOverview/gtr:projectComposition"
 
-    def __init__(self, client, url, raw, paging):
-        super(Projects, self).__init__(client, url, raw, paging)
+    def __init__(self, raw):
+        super(ProjectsXMLDAO, self).__init__(raw)
 
-    def projects(self):
+    def projects(self, client):
         raws = self._do_xpath(self.project_xpath)
-        return [Project(self.client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
+        return [Project(client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
         
     def list_elements(self):
         return self.projects()
@@ -416,6 +487,37 @@ class Publications(NativePaged):
 ##### Individual Entity Objects ####
 
 class Project(Native):
+    def __init__(self, client, url, raw, dao=None):
+        super(Project, self).__init__(client, url)
+        self.dao = dao if dao is not None else client.factory.project(client, raw)
+
+    def id(self): return self.dao.id()
+    def title(self): return self.dao.title()
+    def start(self): return self.dao.start()
+    def status(self): return self.dao.status()  
+    def end(self): return self.dao.end()
+    def abstract(self): return self.dao.abstract()
+    def funder(self): return self.dao.funder()
+    def value(self): return self.dao.value()
+    def category(self): return self.dao.category()
+    def reference(self): return self.dao.reference()
+    
+    def lead(self): return self.dao.lead(self.client)
+    def orgs(self): return self.dao.orgs(self.client)
+    def people(self): return self.dao.people(self.client)
+    
+    def collaboration_outputs(self): pass
+    def intellectual_property_outputs(self): pass
+    def policy_influence_outputs(self): pass
+    def product_outputs(self): pass
+    def research_material_outputs(self): pass
+    def publications(self): pass
+    
+    def fetch(self):
+        updated_proj = self.client.project(self.id())
+        self.dao.raw = updated_proj.dao.raw
+
+class ProjectXMLDAO(NativeXMLDAO):
 
     composition_base = "/gtr:projectOverview/gtr:projectComposition"
     project_base = composition_base + "/gtr:project"
@@ -442,8 +544,8 @@ class Project(Native):
     organisation_element = "organisation"
     person_element = "person"
 
-    def __init__(self, client, url, raw):
-        super(Project, self).__init__(client, url, raw)
+    def __init__(self, raw):
+        super(ProjectXMLDAO, self).__init__(raw)
 
     def id(self):
         return self._from_xpath(self.id_xpath)
@@ -475,43 +577,21 @@ class Project(Native):
     def reference(self):
         return self._from_xpath(self.reference_xpath)
     
-    def lead(self):
+    def lead(self, client):
         raws = self._port(self.lead_xpath, self.organisation_element)
-        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
+        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
         
-    def orgs(self):
+    def orgs(self, client):
         raws = self._do_xpath(self.orgs_xpath)
-        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
+        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
         
-    def people(self):
+    def people(self, client):
         raws = self._port(self.person_xpath, self.person_element)
-        return [Person(self.client, None, self._wrap(raw, self.person_wrapper)) for raw in raws]
+        return [Person(client, None, self._wrap(raw, self.person_wrapper)) for raw in raws]
     
-    def collaborators(self):
+    def collaborators(self, client):
         raws = self._port(self.collaborator_xpath, self.organisation_element)
-        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
-    
-    def collaboration_outputs(self):
-        pass
-    
-    def intellectual_property_outputs(self):
-        pass
-        
-    def policy_influence_outputs(self):
-        pass
-        
-    def product_outputs(self):
-        pass
-        
-    def research_material_outputs(self):
-        pass
-        
-    def publications(self):
-        pass
-    
-    def fetch(self):
-        updated_proj = self.client.project(self.id())
-        self.raw = updated_proj.raw
+        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
         
 class Person(Native):
 

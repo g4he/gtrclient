@@ -2,7 +2,7 @@ import urlparse, urllib
 
 def set_query_param(url, param, value):
     urld = URL(url)
-    urld.set_query_param(param, page_size)
+    urld.set_query_param(param, value)
     return urld.url()
 
 def get_query_param(url, param):
