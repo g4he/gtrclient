@@ -1,5 +1,5 @@
 import requests, json
-import urler, xmltodict
+import urler
 from lxml import etree
 from copy import deepcopy
 
@@ -27,45 +27,65 @@ class GtRNative(object):
     
     def projects(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        data, paging = self._api(self.project_base, page, page_size)
-        return Projects(self, data, paging, self.project_base)
+        page_size = page_size if page_size is not None else self.page_size
+        data, paging = self._api(self.project_base, page=page, page_size=page_size)
+        if data is not None and paging is not None:
+            return Projects(self, data, paging, self.project_base)
+        return None
         
     def organisations(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        data, paging = self._api(self.org_base, page, page_size)
-        return Organisations(self, data, paging, self.org_base)
+        page_size = page_size if page_size is not None else self.page_size
+        data, paging = self._api(self.org_base, page=page, page_size=page_size)
+        if data is not None and paging is not None:
+            return Organisations(self, data, paging, self.org_base)
+        return None
 
     def people(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        data, paging = self._api(self.person_base, page, page_size)
-        return People(self, data, paging, self.person_base)
+        page_size = page_size if page_size is not None else self.page_size
+        data, paging = self._api(self.person_base, page=page, page_size=page_size)
+        if data is not None and paging is not None:
+            return People(self, data, paging, self.person_base)
+        return None
         
     def publications(self, page=None, page_size=None):
         page_size = self._constrain_page_size(page_size)
-        data, paging = self._api(self.publication_base, page, page_size)
-        return Publications(self, data, paging, self.publication_base)
+        page_size = page_size if page_size is not None else self.page_size
+        data, paging = self._api(self.publication_base, page=page, page_size=page_size)
+        if data is not None and paging is not None:
+            return Publications(self, data, paging, self.publication_base)
+        return None
     
     ## Individual retrieval methods ##
     
     def project(self, uuid):
         url = self.project_base + uuid
-        raw, paging = self._api(url)
-        return Project(self, raw)
+        raw, _ = self._api(url)
+        if raw is not None:
+            return Project(self, raw)
+        return None
 
     def organisation(self, uuid):
         url = self.org_base + uuid
         raw, paging = self._api(url)
-        return Organisation(self, raw, paging)
+        if raw is not None and paging is not None:
+            return Organisation(self, raw, paging)
+        return None
         
     def person(self, uuid):
         url = self.person_base + uuid
-        raw, paging = self._api(url)
-        return Person(self, raw)
+        raw, _ = self._api(url)
+        if raw is not None:
+            return Person(self, raw)
+        return None
 
     def publication(self, uuid):
         url = self.publication_base + uuid
-        raw, paging = self._api(url)
-        return Publication(self, raw)
+        raw, _ = self._api(url)
+        if raw is not None:
+            return Publication(self, raw)
+        return None
         
     ## Private utility methods ##
     
@@ -81,12 +101,18 @@ class GtRNative(object):
         if page_size is not None:
             rest_url = urler.set_query_param(rest_url, "fetchSize", page_size)
         
+        #print headers
+        #print rest_url
+        
         resp = None
         if self.username is None:
             resp = requests.get(rest_url, headers=headers)
         else:
             resp = requests.get(rest_url, headers=headers, auth=(self.username, self.password))
-            
+        
+        #print resp
+        #print resp.status_code
+        
         if resp is None or resp.status_code != 200:
             return None, None # FIXME: maybe raise an exception?
         
@@ -249,7 +275,9 @@ class Native(object):
             return self.dao.xml(pretty_print)
         
         xml, _ = self.client._api(self.url(), mimetype="application/xml")
-        return etree.tostring(xml, pretty_print=pretty_print)
+        if xml is not None:
+            return etree.tostring(xml, pretty_print=pretty_print)
+        return None
         
     def as_dict(self):
         if self.dao is None:
@@ -386,33 +414,41 @@ class NativePaged(Native):
         if self.paging.next is None or self.paging.next == "":
             return False
         raw, paging = self.client._api(self.paging.next)
-        self.dao.raw = raw
-        self.paging = paging
-        return True
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
     
     def previous_page(self):
         if self.paging.previous is None or self.paging.previous == "":
             return False
         raw, paging = self.client._api(self.paging.previous)
-        self.dao.raw = raw
-        self.paging = paging
-        return True
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
         
     def first_page(self):
         if self.paging.first is None or self.paging.first == "":
             return False
-        xml, paging = self.client._api(self.paging.first)
-        self.dao.raw = xml
-        self.paging = paging
-        return True
+        raw, paging = self.client._api(self.paging.first)
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
         
     def last_page(self):
         if self.paging.last is None or self.paging.last == "":
             return False
         raw, paging = self.client._api(self.paging.last)
-        self.dao.raw = raw
-        self.paging = paging
-        return True
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
     
     def skip_to_page(self, page):
         if self.paging.last is None or self.paging.last == "":
@@ -422,9 +458,11 @@ class NativePaged(Native):
         if page < 1:
             return False
         raw, paging = self.client._api(self.url(), page=page)
-        self.dao.raw = raw
-        self.paging = paging
-        return True
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
     
     def current_page(self):
         return self.paging.current_page()
@@ -447,8 +485,8 @@ class NativePaged(Native):
             self.first_page()
         def f():
             while True:
-                projects = self.projects()
-                for p in projects:
+                elements = self.list_elements()
+                for p in elements:
                     yield p
                 if stop_at_page_boundary:
                     break
@@ -560,7 +598,7 @@ class People(NativePaged):
         return self.dao.people(self.client)
         
     def list_elements(self):
-        return self.organisations()
+        return self.people()
 
 class PeopleXMLDAO(NativeXMLDAO):
 
@@ -580,7 +618,7 @@ class PeopleJSONDAO(NativeJSONDAO):
         super(PeopleJSONDAO, self).__init__(raw)
 
     def people(self, client):
-        return [Person(client, {"personOverview" : {"person" :  data}})
+        return [Person(client, {"person" :  data})
                     for data in self.raw.get("person", [])]
 
 ## ----- End People ------ ##
@@ -622,7 +660,7 @@ class PublicationsJSONDAO(NativeJSONDAO):
         super(PublicationsJSONDAO, self).__init__(raw)
 
     def publications(self, client):
-        return [Publication(client, {"publicationOverview" : { "publication" : data }})
+        return [Publication(client, { "publication" : data })
                         for data in self.raw.get("publication", [])]
 
 ## ------- End Publications ------ ##
@@ -661,7 +699,10 @@ class Project(Native):
     
     def fetch(self):
         updated_proj = self.client.project(self.id())
-        self.dao.raw = updated_proj.dao.raw
+        if updated_proj is not None:
+            self.dao.raw = updated_proj.dao.raw
+            return True
+        return False
 
 class ProjectXMLDAO(NativeXMLDAO):
 
@@ -819,8 +860,11 @@ class Organisation(NativePaged):
     
     def fetch(self):
         updated_org = self.client.organisation(self.id())
-        self.dao.raw = updated_org.dao.raw
-        self.paging = updated_org.paging
+        if updated_org is not None:
+            self.dao.raw = updated_org.dao.raw
+            self.paging = updated_org.paging
+            return True
+        return False
 
 class OrganisationXMLDAO(NativeXMLDAO):
 
@@ -878,7 +922,10 @@ class Person(Native):
     
     def fetch(self):
         updated_person = self.client.person(self.id())
-        self.dao.raw = updated_person.dao.raw
+        if updated_person is not None:
+            self.dao.raw = updated_person.dao.raw
+            return True
+        return False
 
 class PersonXMLDAO(NativeXMLDAO):
 
@@ -913,11 +960,8 @@ class PersonJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
         super(PersonJSONDAO, self).__init__(raw)
     
-    def _overview(self):
-        return self.raw.get("personOverview", {})
-    
     def _person(self):
-        return self._overview().get("person", {})
+        return self.raw.get("person", {})
     
     def url(self):
         return self._person().get("url")
@@ -947,7 +991,10 @@ class Publication(Native):
     
     def fetch(self):
         updated_pub = self.client.publication(self.id())
-        self.dao.raw = updated_pub.dao.raw
+        if updated_pub is not None:
+            self.dao.raw = updated_pub.dao.raw
+            return True
+        return False
 
 class PublicationXMLDAO(NativeXMLDAO):
     overview_base = "/gtr:publicationOverview"
@@ -973,11 +1020,8 @@ class PublicationJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
         super(PublicationJSONDAO, self).__init__(raw)
     
-    def _overview(self):
-        return self.raw.get("publicationOverview", {})
-    
     def _publication(self):
-        return self._overview().get("publication", {})
+        return self.raw.get("publication", {})
     
     def url(self):
         return self._publication().get("url")
