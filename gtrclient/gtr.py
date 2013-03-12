@@ -25,6 +25,21 @@ class GtRNative(object):
         page_size = self._constrain_page_size(page_size)
         xml, paging = self._api(self.project_base, page, page_size)
         return Projects(self, self.project_base, xml, paging)
+        
+    def organisations(self, page=None, page_size=None):
+        page_size = self._constrain_page_size(page_size)
+        xml, paging = self._api(self.org_base, page, page_size)
+        return Organisations(self, self.org_base, xml, paging)
+
+    def people(self, page=None, page_size=None):
+        page_size = self._constrain_page_size(page_size)
+        xml, paging = self._api(self.person_base, page, page_size)
+        return People(self, self.person_base, xml, paging)
+        
+    def publications(self, page=None, page_size=None):
+        page_size = self._constrain_page_size(page_size)
+        xml, paging = self._api(self.publication_base, page, page_size)
+        return Publications(self, self.publication_base, xml, paging)
     
     ## Individual retrieval methods ##
     
@@ -327,6 +342,9 @@ class NativePaged(Native):
                 if not self.next_page():
                     break
         return f()
+        
+    def __len__(self):
+        return self.record_count()
 
 
 #### List Objects ####
@@ -347,6 +365,53 @@ class Projects(NativePaged):
     def list_elements(self):
         return self.projects()
 
+class Organisations(NativePaged):
+
+    organisation_xpath = "/gtr:organisations/gtr:organisation"
+    
+    organisation_wrapper = "gtr:organisationOverview"
+
+    def __init__(self, client, url, raw, paging):
+        super(Organisations, self).__init__(client, url, raw, paging)
+
+    def organisations(self):
+        raws = self._do_xpath(self.organisation_xpath)
+        return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
+        
+    def list_elements(self):
+        return self.organisations()
+
+class People(NativePaged):
+
+    person_xpath = "/gtr:people/gtr:person"
+    
+    person_wrapper = "gtr:personOverview"
+
+    def __init__(self, client, url, raw, paging):
+        super(People, self).__init__(client, url, raw, paging)
+
+    def people(self):
+        raws = self._do_xpath(self.person_xpath)
+        return [Person(self.client, None, self._wrap(raw, self.person_wrapper)) for raw in raws]
+        
+    def list_elements(self):
+        return self.people()
+        
+class Publications(NativePaged):
+
+    publication_xpath = "/gtr:publications/gtr:publication"
+    
+    publication_wrapper = "gtr:publicationOverview"
+
+    def __init__(self, client, url, raw, paging):
+        super(Publications, self).__init__(client, url, raw, paging)
+
+    def publications(self):
+        raws = self._do_xpath(self.publication_xpath)
+        return [Publication(self.client, None, self._wrap(raw, self.publication_wrapper)) for raw in raws]
+        
+    def list_elements(self):
+        return self.publications()
 
 ##### Individual Entity Objects ####
 
@@ -496,4 +561,24 @@ class Organisation(NativePaged):
         updated_org = self.client.organisation(self.id())
         self.raw = updated_org.raw
         self.paging = updated_org.paging
+
+class Publication(Native):
+    overview_base = "/gtr:publicationOverview"
+    publication_base = overview_base + "/gtr:publication"
+    
+    id_xpath = publication_base + "/gtr:id"
+    title_xpath = publication_base + "/gtr:title"
+    
+    def __init__(self, client, url, raw, paging):
+        super(Publication, self).__init__(client, url, raw, paging)
+    
+    def id(self):
+        return self._from_xpath(self.id_xpath)
         
+    def title(self):
+        return self._from_xpath(self.title_xpath)
+    
+    def fetch(self):
+        updated_pub = self.client.publication(self.id())
+        self.raw = updated_pub.raw
+    
