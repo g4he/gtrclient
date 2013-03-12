@@ -142,11 +142,15 @@ class GtRDAOFactory(object):
         self.class_map = {
             "application/xml" : {
                 "projects" : ProjectsXMLDAO,
-                "project" : ProjectXMLDAO
+                "organisations" : OrganisationsXMLDAO,
+                "project" : ProjectXMLDAO,
+                "organisation" : OrganisationXMLDAO
             },
             "application/json" : {
                 "projects" : ProjectsJSONDAO,
-                "project" : ProjectJSONDAO
+                "organisations" : OrganisationsJSONDAO,
+                "project" : ProjectJSONDAO,
+                "organisation" : OrganisationJSONDAO
             }
         }
     
@@ -155,6 +159,12 @@ class GtRDAOFactory(object):
         
     def project(self, client, data):
         return self._load(client, data, "project")
+        
+    def organisations(self, client, data):
+        return self._load(client, data, "organisations")
+    
+    def organisation(self, client, data):
+        return self._load(client, data, "organisation")
     
     def _load(self, client, data, domain):
         klazz = self.class_map.get(client.mimetype, {}).get(domain)
@@ -444,21 +454,43 @@ class ProjectsJSONDAO(NativeJSONDAO):
 
 ### -------- End Projects -------- ###
 
+### ------- Organisations -------- ###
+
 class Organisations(NativePaged):
+
+    def __init__(self, client, url, raw, paging, dao=None):
+        super(Organisations, self).__init__(client, url, paging)
+        self.dao = dao if dao is not None else client.factory.organisations(client, raw)
+
+    def organisations(self):
+        return self.dao.organisations(self.client)
+        
+    def list_elements(self):
+        return self.organisations()
+
+class OrganisationsXMLDAO(NativeXMLDAO):
 
     organisation_xpath = "/gtr:organisations/gtr:organisation"
     
     organisation_wrapper = "gtr:organisationOverview"
 
-    def __init__(self, client, url, raw, paging):
-        super(Organisations, self).__init__(client, url, raw, paging)
+    def __init__(self, raw):
+        super(OrganisationsXMLDAO, self).__init__(raw)
 
     def organisations(self):
         raws = self._do_xpath(self.organisation_xpath)
         return [Organisation(self.client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
-        
-    def list_elements(self):
-        return self.organisations()
+
+class OrganisationsJSONDAO(NativeJSONDAO):
+    def __init__(self, raw):
+        super(OrganisationsJSONDAO, self).__init__(raw)
+    
+    def organisations(self, client):
+        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}, None) 
+                    for data in self.raw.get('organisation', [])]
+
+
+## ---- End Organisations ---- ##
 
 class People(NativePaged):
 
@@ -661,7 +693,61 @@ class ProjectJSONDAO(NativeJSONDAO):
                     for data in self._composition().get("collaborator", [])]
 
 ## ------ End Project -------- ##
-  
+
+## -------- Organisation -------- ##
+
+class Organisation(NativePaged):
+
+    def __init__(self, client, url, raw, paging, dao=None):
+        super(Organisation, self).__init__(client, url, paging)
+        self.dao = dao if dao is not None else client.factory.organisation(client, raw)
+        
+    def id(self): return self.dao.id()
+    def name(self): return self.dao.name()
+    
+    def fetch(self):
+        updated_org = self.client.organisation(self.id())
+        self.dao.raw = updated_org.dao.raw
+        self.paging = updated_org.paging
+
+class OrganisationXMLDAO(NativeXMLDAO):
+
+    overview_base = "/gtr:organisationOverview"
+    
+    id_xpath = overview_base + "/gtr:organisation/gtr:id"
+    name_xpath = overview_base + "/gtr:organisation/gtr:name"
+
+    def __init__(self, raw):
+        super(OrganisationXMLDAO, self).__init__(raw)
+        
+    def id(self):
+        return self._from_xpath(self.id_xpath)
+        
+    def name(self):
+        return self._from_xpath(self.name_xpath)
+    
+class OrganisationJSONDAO(NativeJSONDAO):
+
+    overview_base = "/gtr:organisationOverview"
+    
+    id_xpath = overview_base + "/gtr:organisation/gtr:id"
+    name_xpath = overview_base + "/gtr:organisation/gtr:name"
+
+    def __init__(self, raw):
+        super(OrganisationJSONDAO, self).__init__(raw)
+    
+    def _org(self):
+        return (self.raw.get("organisationOverview", {})
+                        .get("organisation", {}))
+    
+    def id(self):
+        return self._org().get("id")
+        
+    def name(self):
+        return self._org().get("name")
+
+## ------- End Organisation ---------- ##
+
 class Person(Native):
 
     overview_base = "/gtr:personOverview"
@@ -690,26 +776,6 @@ class Person(Native):
         updated_person = self.client.person(self.id())
         self.raw = updated_person.raw
 
-class Organisation(NativePaged):
-
-    overview_base = "/gtr:organisationOverview"
-    
-    id_xpath = overview_base + "/gtr:organisation/gtr:id"
-    name_xpath = overview_base + "/gtr:organisation/gtr:name"
-
-    def __init__(self, client, url, raw, paging):
-        super(Organisation, self).__init__(client, url, raw, paging)
-        
-    def id(self):
-        return self._from_xpath(self.id_xpath)
-        
-    def name(self):
-        return self._from_xpath(self.name_xpath)
-    
-    def fetch(self):
-        updated_org = self.client.organisation(self.id())
-        self.raw = updated_org.raw
-        self.paging = updated_org.paging
 
 class Publication(Native):
     overview_base = "/gtr:publicationOverview"
