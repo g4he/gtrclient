@@ -20,13 +20,13 @@ def crawl(base_url, username=None, password=None,
     
     # do organisations
     organisations = client.organisations()
-    _mine(organisations, organisation_limit, organisation_callback, "organisation", min_request_gap)
+    _mine(organisations, organisation_limit, organisation_callback, "organisation", min_request_gap, load_all_projects=True)
     
     # do publications
     publications = client.publications()
     _mine(publications, publication_limit, publication_callback, "publication", min_request_gap)
                 
-def _mine(iterable, limit, callback, name, min_request_gap=0, fetch=True):
+def _mine(iterable, limit, callback, name, min_request_gap=0, fetch=True, load_all_projects=False):
     if limit == 0:
         return
     
@@ -47,6 +47,11 @@ def _mine(iterable, limit, callback, name, min_request_gap=0, fetch=True):
                 continue
         
         log.info("processing " + str(name) + " " + str(p.id()) + " (" + str(count) + " of " + str(len(iterable)) + ")")
+        
+        if load_all_projects:
+            log.info("loading all projects for this entity")
+            p.load_all_projects()
+        
         callback(p)
         
         end = time.time()

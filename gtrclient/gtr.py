@@ -66,9 +66,11 @@ class GtRNative(object):
             return Project(self, raw)
         return None
 
-    def organisation(self, uuid):
+    def organisation(self, uuid, page_size=None):
         url = self.org_base + uuid
-        raw, paging = self._api(url)
+        page_size = self._constrain_page_size(page_size)
+        page_size = page_size if page_size is not None else self.page_size
+        raw, paging = self._api(url, page_size=page_size)
         if raw is not None and paging is not None:
             return Organisation(self, raw, paging)
         return None
@@ -853,10 +855,43 @@ class Organisation(NativePaged):
     def __init__(self, client, raw, paging, dao=None):
         super(Organisation, self).__init__(client, paging)
         self.dao = dao if dao is not None else client.factory.organisation(client, raw)
+        self.custom_dao = dao is not None
     
     def url(self): return self.dao.url()
     def id(self): return self.dao.id()
     def name(self): return self.dao.name()
+    def projects(self): return self.dao.projects(self.client)
+    
+    def load_all_projects(self):
+        # use with caution, will load all the projects for this organisation
+        # and if you use any of the paging features afterwards, it will be
+        # reset
+        current_projects = self.projects()
+        self.next_page()
+        self.dao.add_projects(current_projects)
+        """
+        if self.paging.next is None or self.paging.next == "":
+            return
+        raw, paging = self.client._api(self.paging.next)
+        if paging is not None:
+            self.paging = paging
+        if raw is not None:
+            interim_dao = None
+            if self.custom_dao:
+                interim_dao = deepcopy(self.dao)
+                interim_dao.raw = raw
+            else:
+                interim_dao = client.factory.organisation(client, raw)
+            
+            projects = raw.get("organisationOverview", {}).get("project", [])
+        
+        if raw is not None and paging is not None:
+            self.dao.raw = raw
+            self.paging = paging
+            return True
+        return False
+        next.get("organisationOverview", {})
+        """
     
     def fetch(self):
         updated_org = self.client.organisation(self.id())
@@ -891,6 +926,9 @@ class OrganisationJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
         super(OrganisationJSONDAO, self).__init__(raw)
     
+    def _overview(self):
+        return self.raw.get("organisationOverview", {})
+    
     def _org(self):
         return (self.raw.get("organisationOverview", {})
                         .get("organisation", {}))
@@ -903,6 +941,15 @@ class OrganisationJSONDAO(NativeJSONDAO):
         
     def name(self):
         return self._org().get("name")
+        
+    def projects(self, client):
+        return [Project(client, {"projectOverview" : {"project" : data}})
+                        for data in self._overview().get("project", [])]
+                        
+    def add_projects(self, projects):
+        project_raw = [p.dao.raw['projectOverview']['project'] for p in projects]
+        self.raw['organisationOverview']['project'] += project_raw
+        
 
 ## ------- End Organisation ---------- ##
 
@@ -953,7 +1000,7 @@ class PersonXMLDAO(NativeXMLDAO):
             
     def projects(self, client):
         raws = self._do_xpath(self.projects_xpath)
-        return [Project(client, None, self._wrap(raw, self.project_wrapper)) for raw in raws]
+        return [Project(client, self._wrap(raw, self.project_wrapper)) for raw in raws]
         
 class PersonJSONDAO(NativeJSONDAO):
 
@@ -973,7 +1020,7 @@ class PersonJSONDAO(NativeJSONDAO):
         return self._person().get("name")
             
     def projects(self, client):
-        return [Project(client, None, {"projectOverview" : {"project" : data}})
+        return [Project(client, {"projectOverview" : {"project" : data}})
                         for data in self._overview().get("projectComposition", [])]
 
 ## --------- End Person ----------- ##
