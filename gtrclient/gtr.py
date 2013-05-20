@@ -772,19 +772,21 @@ class ProjectXMLDAO(NativeXMLDAO):
     
     def lead(self, client):
         raws = self._port(self.lead_xpath, self.organisation_element)
-        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
+        if len(raws) > 0:
+            return Organisation(client, self._wrap(raws[0], self.organisation_wrapper), None)
+        return None
         
     def orgs(self, client):
         raws = self._do_xpath(self.orgs_xpath)
-        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
+        return [Organisation(client, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
         
     def people(self, client):
         raws = self._port(self.person_xpath, self.person_element)
-        return [Person(client, None, self._wrap(raw, self.person_wrapper)) for raw in raws]
+        return [Person(client, self._wrap(raw, self.person_wrapper)) for raw in raws]
     
     def collaborators(self, client):
         raws = self._port(self.collaborator_xpath, self.organisation_element)
-        return [Organisation(client, None, self._wrap(raw, self.organisation_wrapper)) for raw in raws]
+        return [Organisation(client, self._wrap(raw, self.organisation_wrapper), None) for raw in raws]
 
 class ProjectJSONDAO(NativeJSONDAO):
     def __init__(self, raw):
@@ -831,19 +833,21 @@ class ProjectJSONDAO(NativeJSONDAO):
         return self._project().get("grantReference")
     
     def lead(self, client):
-        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}) 
-                    for data in self._compositon().get("leadResearchOrganisation", [])]
+        lro = self._composition().get("leadResearchOrganisation")
+        if lro is not None:
+            return Organisation(client, {"organisationOverview" : {"organisation" : lro}}, None)
+        return None
         
     def orgs(self, client):
-        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}}) 
+        return [Organisation(client, {"organisationOverview" : {"organisation" : data}}, None) 
                     for data in self._composition().get("organisation", [])]
         
     def people(self, client):
-        return [Person(client, None, {"personOverview" : {"person" : data }})
+        return [Person(client, {"personOverview" : {"person" : data }})
                     for data in self._composition().get("projectPerson", [])]
     
     def collaborators(self, client):
-        return [Organisation(client, None, {"organisationOverview" : {"organisation" : data}})
+        return [Organisation(client, {"organisationOverview" : {"organisation" : data}}, None)
                     for data in self._composition().get("collaborator", [])]
 
 ## ------ End Project -------- ##
