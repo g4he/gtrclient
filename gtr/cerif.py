@@ -105,14 +105,18 @@ class CerifDAOFactory(object):
             return klazz(data)
         return None
 
-class Project(object):
+class CerifObject(object):
+    def as_dict(self):
+        return self.dao.raw
+
+class Project(CerifObject):
     def __init__(self, client, raw, dao=None):
         # super(Project, self).__init__(client)
         self.client = client
         self.dao = dao if dao is not None else client.factory.project(client, raw)
         
-    def org_cerif_relations(self):
-        return self.dao.cerif_relations(self.client, name="{urn:xmlns:org:eurocris:cerif-1.5-1}cfProj_OrgUnit")
+    def org_cerif_relations(self, org_id=None):
+        return self.dao.cerif_relations(self.client, name="{urn:xmlns:org:eurocris:cerif-1.5-1}cfProj_OrgUnit", cfOrgUnitId=org_id)
         
 
 class ProjectXMLDAO(object):
@@ -123,7 +127,7 @@ class ProjectJSONDAO(object):
     def __init__(self, raw):
         self.raw = raw
     
-    def cerif_relations(self, client, name=None):
+    def cerif_relations(self, client, name=None, cfOrgUnitId=None):
         if name is None:
             return None
         
@@ -134,11 +138,24 @@ class ProjectJSONDAO(object):
         
         proj = root[0].get("cfProj", {})
         
+        def member(data, name, cfOrgUnitId=None):
+            name_match = False
+            if data.get("JAXBElement", {}).get("name") == name:
+                name_match = True
+            
+            org_match = False
+            if cfOrgUnitId is not None and data.get("JAXBElement", {}).get("value", {}).get("cfOrgUnitId") == cfOrgUnitId:
+                org_match = True
+            elif cfOrgUnitId is None:
+                org_match = True
+            
+            return name_match and org_match
+            
         return [CerifRelation(client, data.get("JAXBElement", {})) 
                     for data in proj.get("cfTitleOrCfAbstrOrCfKeyw", []) 
-                    if data.get("JAXBElement", {}).get("name") == name]
+                    if member(data, name, cfOrgUnitId)]
 
-class CerifRelation(object):
+class CerifRelation(CerifObject):
     def __init__(self, client, raw, dao=None):
         self.client = client
         self.dao = dao if dao is not None else client.factory.cerif_relation(client, raw)
@@ -151,6 +168,9 @@ class CerifRelation(object):
         
     def value(self):
         return self.dao.value()
+        
+    def get_class(self):
+        return self.client.cerif_class(self.class_id())
 
 class CerifRelationJSONDAO(object):
     def __init__(self, raw):
@@ -168,18 +188,29 @@ class CerifRelationJSONDAO(object):
     def value(self):
         return self.raw.get("value", {}).get("value")
 
-class CerifClass(object):
+class CerifClass(CerifObject):
     def __init__(self, client, raw, dao=None):
         self.client = client
         self.dao = dao if dao is not None else client.factory.cerif_class(client, raw)
-        
+    
+    def id(self): return self.dao.id()
+    
+    def term(self):
+        rels = self.term_cerif_relations()
+        if len(rels) == 0:
+            return None
+        return rels[0].value()
+    
     def term_cerif_relations(self):
         return self.dao.cerif_relations(self.client, name="{urn:xmlns:org:eurocris:cerif-1.5-1}cfTerm")
     
 class CerifClassJSONDAO(object):
     def __init__(self, raw):
         self.raw = raw
-        
+      
+    def id(self):
+        return self.raw.get("cfClassId")
+          
     def as_dict(self):
         return self.raw
 

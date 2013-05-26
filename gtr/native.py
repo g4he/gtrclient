@@ -562,14 +562,15 @@ class Project(Native):
     def status(self): return self.dao.status()  
     def end(self): return self.dao.end()
     def abstract(self): return self.dao.abstract()
-    def funder(self): return self.dao.funder()
     def value(self): return self.dao.value()
     def category(self): return self.dao.category()
     def reference(self): return self.dao.reference()
     
+    def funder(self): return self.dao.funder(self.client)
     def lead(self): return self.dao.lead(self.client)
     def orgs(self): return self.dao.orgs(self.client)
     def people(self): return self.dao.people(self.client)
+    def collaborators(self): return self.dao.collaborators(self.client)
     
     def collaboration_outputs(self): pass
     def intellectual_property_outputs(self): pass
@@ -637,6 +638,7 @@ class ProjectXMLDAO(NativeXMLDAO):
     def abstract(self):
         return self._from_xpath(self.abstract_xpath)
     
+    # FIXME
     def funder(self):
         return self._from_xpath(self.funder_xpath)
     
@@ -699,8 +701,8 @@ class ProjectJSONDAO(NativeJSONDAO):
     def abstract(self):
         return self._project().get("abstractText")
     
-    def funder(self):
-        return self._project().get("fund", {}).get("funder", {}).get("name")
+    def funder(self, client):
+        return Organisation(client, {"organisationOverview" : {"organisation" : self._project().get("fund", {}).get("funder", {})}}, None)
     
     def value(self):
         return self._project().get("fund", {}).get("valuePounds")
@@ -722,7 +724,7 @@ class ProjectJSONDAO(NativeJSONDAO):
                     for data in self._composition().get("organisation", [])]
         
     def people(self, client):
-        return [Person(client, {"personOverview" : {"person" : data }})
+        return [Person(client, {"person" : data })
                     for data in self._composition().get("projectPerson", [])]
     
     def collaborators(self, client):
@@ -845,17 +847,31 @@ class Person(Native):
         self.dao = dao if dao is not None else client.factory.person(client, raw)
 
     def url(self): return self.dao.url()
-    def id(self): return self.dao.id()    
-    def name(self): return self.dao.name()
+    def id(self): return self.dao.id()
+    
+    def isPI(self): 
+        pr = self.dao.get_project_roles()
+        pi = self.dao.principal_investigator()
+        return pi and "PRINCIPAL_INVESTIGATOR" in pr
+        
+    def isCI(self):
+        pr = self.dao.get_project_roles()
+        ci = self.dao.co_investigator()
+        return ci and "CO_INVESTIGATOR" in pr
     
     def projects(self): return self.dao.projects(self.client)
     
     def fetch(self):
+        """ will flesh this item out with full data from the API - this WILL lose relation information from the parent object """
         updated_person = self.client.person(self.id())
         if updated_person is not None:
             self.dao.raw = updated_person.dao.raw
             return True
         return False
+        
+    def get_full(self):
+        """ will return a full person object from the API """
+        return self.client.person(self.id())
 
 class PersonXMLDAO(NativeXMLDAO):
 
@@ -864,7 +880,6 @@ class PersonXMLDAO(NativeXMLDAO):
 
     url_xpath = person_base + "/@url"    
     id_xpath = person_base + "/gtr:id"
-    name_xpath = person_base + "/gtr:name"
     projects_xpath = overview_base + "/gtr:projectCompositions/gtr:projectComposition"
     
     project_wrapper = "projectOverview"
@@ -877,9 +892,6 @@ class PersonXMLDAO(NativeXMLDAO):
 
     def id(self):
         return self._from_xpath(self.id_xpath)
-        
-    def name(self):
-        return self._from_xpath(self.name_xpath)
             
     def projects(self, client):
         raws = self._do_xpath(self.projects_xpath)
@@ -898,10 +910,16 @@ class PersonJSONDAO(NativeJSONDAO):
     
     def id(self):
         return self._person().get("id")
+    
+    def get_project_roles(self):
+        return self._person().get("projectRole", [])
+    
+    def principal_investigator(self):
+        return self._person().get("principalInvestigator", False)
         
-    def name(self):
-        return self._person().get("name")
-            
+    def co_investigator(self):
+        return self._person().get("coInvestigator", False)
+    
     def projects(self, client):
         return [Project(client, {"projectOverview" : {"project" : data}})
                         for data in self._overview().get("projectComposition", [])]
