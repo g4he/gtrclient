@@ -114,7 +114,9 @@ class Project(CerifObject):
         # super(Project, self).__init__(client)
         self.client = client
         self.dao = dao if dao is not None else client.factory.project(client, raw)
-        
+    
+    def id(self): return self.dao.id()
+    
     def org_cerif_relations(self, org_id=None):
         return self.dao.cerif_relations(self.client, name="{urn:xmlns:org:eurocris:cerif-1.5-1}cfProj_OrgUnit", cfOrgUnitId=org_id)
         
@@ -126,6 +128,9 @@ class ProjectXMLDAO(object):
 class ProjectJSONDAO(object):
     def __init__(self, raw):
         self.raw = raw
+    
+    def id(self):
+        return self.raw.get("cfClassOrCfClassSchemeOrCfClassSchemeDescr", [{}])[0].get("cfProj", {}).get("cfProjId")
     
     def cerif_relations(self, client, name=None, cfOrgUnitId=None):
         if name is None:
