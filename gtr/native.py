@@ -858,6 +858,9 @@ class Person(Native):
         pr = self.dao.get_project_roles()
         ci = self.dao.co_investigator()
         return ci and "CO_INVESTIGATOR" in pr
+        
+    def get_project_roles(self):
+        return self.dao.get_project_roles()
     
     def projects(self): return self.dao.projects(self.client)
     
