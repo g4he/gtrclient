@@ -41,6 +41,15 @@ class GtRCerif(GtR):
         if uuid in self.class_cache:
             return CerifClass(self, self.class_cache[uuid])
         return None
+        
+    def cerif_classes(self):
+        if self.class_cache is None:
+            classes, _ = self._api(self.class_base)
+            cs = [c.get("cfClass") for c in classes.get("cfClassOrCfClassSchemeOrCfClassSchemeDescr", [])]
+            self.class_cache = {}
+            for c in cs:
+                self.class_cache[c.get("cfClassId")] = c
+        return self.class_cache
 
 class CerifDAOFactory(object):
     def __init__(self):
@@ -116,6 +125,7 @@ class Project(CerifObject):
         self.dao = dao if dao is not None else client.factory.project(client, raw)
     
     def id(self): return self.dao.id()
+    def url(self): return self.dao.url()
     
     def org_cerif_relations(self, org_id=None):
         return self.dao.cerif_relations(self.client, name="{urn:xmlns:org:eurocris:cerif-1.5-1}cfProj_OrgUnit", cfOrgUnitId=org_id)
@@ -131,6 +141,9 @@ class ProjectJSONDAO(object):
     
     def id(self):
         return self.raw.get("cfClassOrCfClassSchemeOrCfClassSchemeDescr", [{}])[0].get("cfProj", {}).get("cfProjId")
+    
+    def url(self):
+        return "http://gtr.rcuk.ac.uk/cerif/cfproj/" + self.id()
     
     def cerif_relations(self, client, name=None, cfOrgUnitId=None):
         if name is None:

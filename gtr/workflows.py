@@ -26,7 +26,7 @@ def crawl(base_url, username=None, password=None, min_request_gap=0,
     # do organisations
     if organisation_callback is not None and (organisation_limit > 0 or organisation_limit is None):
         organisations = client.organisations()
-        _mine(organisations, organisation_limit, organisation_callback, "organisation", min_request_gap, load_all_projects=True)
+        _mine(organisations, organisation_limit, organisation_callback, "organisation", min_request_gap)
     
     # do publications
     if publication_callback is not None and (publication_limit > 0 or publication_limit is None):
